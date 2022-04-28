@@ -1,10 +1,9 @@
+from abc import ABC, abstractmethod
 from enum import Enum
 import logging
 import os
 from typing import List
 import urllib.parse
-
-import requests
 
 LOGGER = logging.getLogger(__name__)
 
@@ -54,3 +53,52 @@ class TwitterURLBuilder:
         parsed_params = urllib.parse.urlencode(query_params)
 
         return f"{self.STREAM_API_ENDPOINT}?{parsed_params}" if parsed_params else self.STREAM_API_ENDPOINT
+
+
+class HTTPStreamClient(ABC):
+    @abstractmethod
+    def get(self, url, headers):
+        raise NotImplemented
+
+    @abstractmethod
+    def close(self):
+        raise NotImplemented
+
+
+class RequestsHttpStreamClient(HTTPStreamClient):
+
+    def __init__(self):
+        import requests
+        self._client = requests
+        self._response = None
+
+
+    def get(self, url, headers):
+        self._response = self._client.get(url=url, headers=headers, stream=True)
+        return self._response.iter_lines()
+
+    def close(self):
+        self._response.close()
+
+
+class TwitterStreamProcessor:
+
+    def __init__(self, client: HTTPStreamClient):
+        self.client = client
+        self.twitter_url_builder = TwitterURLBuilder()
+        self.received_items = 0
+
+    def process(self, max_elements=None):
+        stream = self.client.get(
+            url=self.twitter_url_builder.get_url(),
+            headers=self.twitter_url_builder.get_headers()
+        )
+
+        for element in stream:
+            if element:
+                self.received_items += 1
+                print(element)
+
+            if max_elements and self.received_items > max_elements:
+                self.client.close()
+                break

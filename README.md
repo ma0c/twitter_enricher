@@ -36,4 +36,5 @@ Want to test an individual test?
 
 ```bash
 pytest tests/test_playground.py::TestTwitterURLBuilder::test_get_url_without_extras
+pytest tests/test_playground.py::TestTwitterStreamProcessor::test_scoped_process
 ```
