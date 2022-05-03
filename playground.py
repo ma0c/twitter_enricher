@@ -39,6 +39,7 @@ class TwitterStreamFields(str, Enum):
 
 
 class TwitterURLBuilder:
+    """Class that builds URLs and headers to talk with the twitter stream endpoint"""
     ENVIRON_TWITTER_BEARER_TOKEN_NAME = "TWITTER_BEARER_TOKEN"
     STREAM_API_ENDPOINT = "https://api.twitter.com/2/tweets/sample/stream"
 
@@ -72,6 +73,7 @@ class TwitterURLBuilder:
 
 
 class WeatherApiUrlBuilder:
+    """Class that builds URLs to talk with the Weather Api"""
     ENVIRON_WEATHER_API_API_NAME = "WEATHER_API_API_KEY"
     WEATHER_API_ENDPOINT = "http://api.weatherapi.com/v1/current.json"
 
@@ -85,12 +87,14 @@ class WeatherApiUrlBuilder:
 
 
 class HttpClient(ABC):
+    """Base class to inherit and not depend explicitly of a specific vendor"""
     @abstractmethod
     def get(self, url, headers):
         raise NotImplemented
 
 
 class HTTPStreamClient(ABC):
+    """Base class to inherit and not depend explicitly of a specific vendor"""
     @abstractmethod
     def get(self, url, headers):
         raise NotImplemented
@@ -101,6 +105,7 @@ class HTTPStreamClient(ABC):
 
 
 class RequestsHttpClient(HttpClient):
+    """A requests implementation for a basic http client"""
     def __init__(self):
         import requests
         self._client = requests
@@ -111,7 +116,7 @@ class RequestsHttpClient(HttpClient):
 
 
 class RequestsHttpStreamClient(HTTPStreamClient):
-
+    """A requests implementation for a basic http client with stream capabilities"""
     def __init__(self):
         import requests
         self._client = requests
@@ -126,6 +131,14 @@ class RequestsHttpStreamClient(HTTPStreamClient):
 
 
 def centroid_calculator(geo_json):
+    """
+    Twitter API didn't give me a concrete lat/long coordinates or any other valid geo_json value.
+    I tried to use turfpy but since the implementation of Feature and FeatureCollections required some extra work
+
+    So I dicided to keep it clean and calculate a centroid for the bbox parameter (that seems to be in all the
+    responses I saw, probably a more detailed implementation is needed if we want precision but for the sake of
+    a code challenge this is enough for me
+    """
     if geo_json.get("bbox"):
         bbox = geo_json["bbox"]
         return (bbox[0]+bbox[2])/2, (bbox[1]+bbox[3])/2
@@ -134,6 +147,8 @@ def centroid_calculator(geo_json):
 
 
 class TwitterStreamProcessor:
+    """A class that open a stream from twitter and calculate the temperature of the place and a sliding avg of the
+    temperatures, in case the location of the tweet is included, otherwise the tweet is ignored"""
 
     def __init__(self, stream_client: HTTPStreamClient, http_client: HttpClient):
         self.stream_client = stream_client
