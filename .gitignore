@@ -5,3 +5,6 @@
 .envrc
 
 __pycache__
+
+avg.txt
+temp_f.txt

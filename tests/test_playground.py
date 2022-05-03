@@ -1,7 +1,16 @@
+import json
 import os
 from unittest import TestCase, mock
 
-from playground import TwitterURLBuilder, TwitterStreamExpansions, TwitterStreamProcessor, RequestsHttpStreamClient
+from playground import (
+    TwitterURLBuilder,
+    TwitterStreamExpansions,
+    TwitterStreamProcessor,
+    RequestsHttpStreamClient,
+    RequestsHttpClient,
+    centroid_calculator
+)
+
 
 DUMMY_VALUE = "dummy_value"
 
@@ -30,8 +39,62 @@ class TestTwitterURLBuilder(TestCase):
 
 class TestTwitterStreamProcessor(TestCase):
     def setUp(self) -> None:
-        self.client = RequestsHttpStreamClient()
-        self.processor = TwitterStreamProcessor(self.client)
+        self.stream_client = RequestsHttpStreamClient()
+        self.client = RequestsHttpClient()
+        self.processor = TwitterStreamProcessor(self.stream_client, self.client)
 
     def test_scoped_process(self):
         self.processor.process(10)
+
+    def test_no_has_geo_information(self):
+        assert not(
+            self.processor.has_geo_information(
+                {
+                    "data": {
+                        "geo": {},
+                        "id": "1519867438057213952",
+                        "text": "@StvrChild777 Made me sick"
+                    }
+                }
+            )
+        )
+
+    def test_has_geo_information(self):
+        assert (
+            self.processor.has_geo_information(
+                {
+                    "data": {
+                        "geo": {},
+                        "id": "1519867438057213952",
+                        "text": "@StvrChild777 Made me sick"
+                    },
+                    "includes": {
+                        "places": [
+                            {
+                                "full_name": "Long Beach, CA",
+                                "geo": {
+                                    "bbox": [
+                                        -118.250227,
+                                        33.732905,
+                                        -118.0631938,
+                                        33.885438
+                                    ],
+                                    "properties": {},
+                                    "type": "Feature"
+                                },
+                                "id": "01c060cf466c6ce3"
+                            }
+                        ]
+                    }
+                }
+            )
+        )
+
+
+
+class TestCentroidCalculator(TestCase):
+
+    def test_center_bbox(self):
+        test_geo_json = "{\"type\":\"Feature\",\"bbox\":[-118.250227,33.732905,-118.0631938,33.885438],\"properties\":{}}"
+
+        assert centroid_calculator(json.loads(test_geo_json)) == (-118.1567104, 33.809171500000005)

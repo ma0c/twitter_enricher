@@ -72,16 +72,16 @@ class TwitterURLBuilder:
 
 
 class WeatherApiUrlBuilder:
-    ENVIRON_WEATHER_API_API_NAME = "ENVIRON_WEATHER_API_API_NAME"
+    ENVIRON_WEATHER_API_API_NAME = "WEATHER_API_API_KEY"
     WEATHER_API_ENDPOINT = "http://api.weatherapi.com/v1/current.json"
 
     def get_url(self, location):
         weather_api_api_key = os.environ.get(self.ENVIRON_WEATHER_API_API_NAME)
         if not weather_api_api_key:
-            LOGGER.warning("Twitter Bearer Token not found")
-            raise ValueError("Twitter Bearer Token not found")
+            LOGGER.warning("Weather api key not found")
+            raise ValueError("Weather api key not found")
 
-        return f"?key={weather_api_api_key}&q={location}"
+        return f"{self.WEATHER_API_ENDPOINT}?key={weather_api_api_key}&q={location}"
 
 
 class HttpClient(ABC):
@@ -125,84 +125,145 @@ class RequestsHttpStreamClient(HTTPStreamClient):
         self._response.close()
 
 
+def centroid_calculator(geo_json):
+    if geo_json.get("bbox"):
+        bbox = geo_json["bbox"]
+        return (bbox[0]+bbox[2])/2, (bbox[1]+bbox[3])/2
+    else:
+        raise ValueError(f"Not implemented method for extracting centroid in {geo_json}")
+
+
 class TwitterStreamProcessor:
 
-    def __init__(self, client: HTTPStreamClient):
-        self.client = client
+    def __init__(self, stream_client: HTTPStreamClient, http_client: HttpClient):
+        self.stream_client = stream_client
+        self.http_client = http_client
         self.twitter_url_builder = TwitterURLBuilder()
+        self.weather_api_url_builder = WeatherApiUrlBuilder()
         self.received_items = 0
+        self.temperature_read_total_count = 0
+        self.temperature_reads = list()
 
-    def process(self, n=None, **kwargs):
+    def process(self, s, temp_f,  sliding_avg, n=None, tr=None, **kwargs):
         """
         Tweet with information example:
-{'data': {'geo': {'place_id': '01c060cf466c6ce3'},
-          'id': '1519867438057213952',
-          'text': '@StvrChild777 Made me sick'},
- 'includes': {'places': [{'full_name': 'Long Beach, CA',
-                          'geo': {'bbox': [-118.250227,
-                                           33.732905,
-                                           -118.0631938,
-                                           33.885438],
-                                  'properties': {},
-                                  'type': 'Feature'},
-                          'id': '01c060cf466c6ce3'}]}}
-
-
+{
+    'data': {
+        'geo': {
+            'place_id': '01c060cf466c6ce3'
+        },
+        'id': '1519867438057213952',
+        'text': '@StvrChild777 Made me sick'
+    },
+    'includes': {
+        'places': [
+            {
+                'full_name': 'Long Beach, CA',
+                'geo': {
+                    'bbox': [
+                        -118.250227,
+                        33.732905,
+                        -118.0631938,
+                        33.885438
+                    ],
+                'properties': {},
+                'type': 'Feature'
+                },
+                'id': '01c060cf466c6ce3'
+            }
+        ]
+    }
+}
+        :param s: Size of the sliding average
+        :param temp_f: Location for storing the temperatures
+        :param sliding_avg: Location for storing the sliding avg
         :param n: Maximum number of tweets to read
+        :param tr: Maximum number of temperature reads
         :param kwargs:
         :return:
         """
-        stream = self.client.get(
-            url=self.twitter_url_builder.get_url(
-                twitter_fields=[TwitterStreamFields.GEO],
-                expansions=[TwitterStreamExpansions.PLACE_ID],
-                place_fields=[
-                    TwitterStreamPlaceFields.GEO,
-                    TwitterStreamPlaceFields.FULL_NAME,
-                    TwitterStreamPlaceFields.PLACE_TYPE
-                ]
-            ),
-            headers=self.twitter_url_builder.get_headers()
-        )
+        with open(temp_f, "w+") as temp_f_file, open(sliding_avg, "w+") as sliding_avg_file:
+            stream = self.stream_client.get(
+                url=self.twitter_url_builder.get_url(
+                    twitter_fields=[TwitterStreamFields.GEO],
+                    expansions=[TwitterStreamExpansions.PLACE_ID],
+                    place_fields=[
+                        TwitterStreamPlaceFields.GEO,
+                        TwitterStreamPlaceFields.FULL_NAME,
+                        TwitterStreamPlaceFields.PLACE_TYPE
+                    ]
+                ),
+                headers=self.twitter_url_builder.get_headers()
+            )
+            try:
+                for element in stream:
+                    if element:
+                        self.received_items += 1
+                        json_value = json.loads(element)
+                        LOGGER.debug(json_value)
+                        if self.has_geo_information(json_value):
+                            self.temperature_read_total_count += 1
+                            geo_value = json_value["includes"]["places"][0]["geo"]
+                            full_name = json_value["includes"]["places"][0]["full_name"]
+                            LOGGER.debug(geo_value)
+                            centroid = centroid_calculator(geo_value)
+                            weather_url = self.weather_api_url_builder.get_url(f"{centroid[1]},{centroid[0]}")
+                            weather_response = self.http_client.get(weather_url, {})
+                            if weather_response.ok:
+                                weather_response_json = weather_response.json()
+                                current_weather = weather_response_json.get("current", dict()).get("temp_f")
+                                if current_weather:
 
-        for element in stream:
-            if element:
-                self.received_items += 1
-                json_value = json.loads(element)
-                LOGGER.debug(json_value)
+                                    LOGGER.info(f"Weather in {full_name} ({centroid}): {current_weather}")
+                                    self.temperature_reads.append(current_weather)
+                                    if len(self.temperature_reads) > s:
+                                        # If we exceeded the size for sliding AVG we drop the first element
+                                        self.temperature_reads.pop(0)
+                                    current_sliding_avs = sum(self.temperature_reads) / len(self.temperature_reads)
+                                    LOGGER.info(self.temperature_reads)
+                                    temp_f_file.write(f"{current_weather}\n")
+                                    sliding_avg_file.write(f"{current_sliding_avs}\n")
+                                    print(f"Tweet location: {full_name}, temp_f: {current_weather}, avg of last {s}: {current_sliding_avs}")
 
-            if n and self.received_items > n:
-                self.client.close()
-                break
+                    if n and self.received_items >= n or tr and self.temperature_read_total_count >= tr:
+                        self.stream_client.close()
+                        break
+            except KeyboardInterrupt:
+                self.stream_client.close()
+
+    @staticmethod
+    def has_geo_information(twitter_data):
+        return len(twitter_data.get("includes", dict()).get("places", list())) > 0
 
 
 def main(**kwargs):
-    requests_client = RequestsHttpStreamClient()
-    twitter_processor = TwitterStreamProcessor(requests_client)
+    requests_stream_client = RequestsHttpStreamClient()
+    requests_http_client = RequestsHttpClient()
+    twitter_processor = TwitterStreamProcessor(requests_stream_client, requests_http_client)
     twitter_processor.process(**kwargs)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        "Enrich twitter stream with weather information, use --n to specify the number of tweets to analyze"
+        "Enrich twitter stream with weather information"
     )
 
-    parser.add_argument("-max_elements", "--n", type=int, help="Maximiun number of tweets to process")
-    parser.add_argument("-v", default=False, action="store_true", help="Set the verbosity to the highest level")
+    parser.add_argument("--n", type=int, help="Maximum number of tweets to process")
+    parser.add_argument("--tr", type=int, help="Maximum number of temperature reads to process")
+    parser.add_argument("--s", type=int, help="Sliding average size, beween 2 and 100", default=5)
+    parser.add_argument("--v", default=False, action="store_true", help="Increase the verbosity level")
+    parser.add_argument("--vv", default=False, action="store_true", help="Set the verbosity to the highest level")
+    parser.add_argument("--temp_f", default="temp_f.txt", type=str, help="File location for the stream of temperatures")
+    parser.add_argument("--sliding_avg", default="avg.txt", type=str, help="File location for the sliding average of temperatures")
 
     args = parser.parse_args()
     LOGGER.addHandler(logging.StreamHandler())
+
     if args.v:
+        LOGGER.setLevel("INFO")
+    if args.vv:
         LOGGER.setLevel("DEBUG")
+    if not 2 <= args.s <= 100:
+        raise ValueError(f"Sliding average size must be between 2 and 100, value given {args.s}")
 
     main(**vars(args))
-
-
-
-def centroid_calculator(geo_json):
-    import geojson
-    from turfpy.measurement import center
-    from geojson.feature import Feature
-    test = "{\"type\":\"Feature\",\"bbox\":[-118.250227,33.732905,-118.0631938,33.885438],\"properties\":{}}"
-    geo_object = geojson.loads(test)
-    center(geo_object)

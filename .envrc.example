@@ -1,0 +1,3 @@
+
+export TWITTER_BEARER_TOKEN="Put your Twitter bearer toke here"
+export WEATHER_API_API_KEY="Put your weather api key here"
