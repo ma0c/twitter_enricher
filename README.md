@@ -12,25 +12,26 @@ the weather information about the tweet location and a sliding average of the te
 
 ## Installation
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+```console
+$ python -m venv .venv
+$ source .venv/bin/activate
+$ pip install -r requirements.txt
 ```
 
 ## Run
 
 Make sure you have the following env variables in your shell
 
-```envfile
+```shell
 TWITTER_BEARER_TOKEN="AAAAAAAAAAAAAAAAAAAAAA6..."
 WEATHER_API_API_KEY="29..."
 ```
 
 If you're using direnv use the following command to copy the example file and put the appropriate values
 
-```bash
-cp envrc.example .envrc
+```console
+$ cp envrc.example .envrc
+$ direnv allow
 ```
 
 To get the values check the following links:
@@ -40,21 +41,21 @@ To get the values check the following links:
 
 Then execute
 
-```bash
-python playground.py --tr 10 --s 5
+```console
+$ python playground.py --tr 10 --s 5
 ```
 
 See all options using
 
-```bash
-python playground.py --help
+```console
+$ python playground.py --help
 ```
 
 ## Testing
 
 Use pytest
 
-```bash
-pytest
+```console
+$ pytest
 ```
 
